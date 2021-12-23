@@ -12,40 +12,45 @@ class PlaybookConverter:
         self._playbook = playbook
 
     def convert(self):
-        # TODO dedup
         # TODO convert to python
         return self._transform_graph_sequence(self._playbook['starttaskid'])
 
     @functools.lru_cache(2**16)
-    def _transform_graph_sequence(self, n):
+    def _transform_graph_sequence(self, n, stop=None):
         parts = [n]
         while True:
             node = self._playbook['tasks'][n]
-            next_nodes = []
-            if 'nexttasks' in node:
-                for n2 in itertools.chain(*node['nexttasks'].values()):
-                    next_nodes.append(n2)
+            if 'nexttasks' not in node:
+                break
+            next_nodes = list(itertools.chain(*node['nexttasks'].values()))
             if len(next_nodes) == 0:
                 break
             elif len(next_nodes) == 1:
+                # 1:1 link unless n is stop
                 n = next_nodes[0]
+                if n == stop:
+                    break
                 parts.append(n)
             else:
+                # preserve condition object structure
+                # and append to parts recursively
                 n = self._get_first_common_node(n)
                 parts2 = {}
                 for k, v in node['nexttasks'].items():
                     paths = []
                     for n2 in v:
+                        if n2 == stop:
+                            continue
                         if n2 == n:
                             paths.append([])
                         else:
-                            paths.append(self._transform_graph_sequence(n2))
+                            paths.append(self._transform_graph_sequence(n2, n))
                     if len(paths) == 1:
                         parts2[k] = paths[0]
                     elif len(paths) > 1:
                         parts2[k] = paths
                 parts.append(parts2)
-                if n is None:
+                if n is None or n == stop:
                     break
                 parts.append(n)
         return parts
