@@ -4,6 +4,7 @@ import sys
 import itertools
 import json
 import functools
+import abc
 
 from ruamel.yaml import YAML
 
@@ -92,23 +93,24 @@ class PlaybookSequenceRenderer:
         self._playbook = playbook
 
     def render(self, transform):
-        out = []
-        if isinstance(transform, str):
-            return self._render_node(transform)
-        elif isinstance(transform, list):
-            return [self.render(t) for t in transform]
-        elif isinstance(transform, dict):
-            return {k: self.render(v) for k, v in transform.items()}
+        return getattr(self, f'_render_{type(transform).__name__}')(transform)
 
-    def _render_node(self, n):
-        return f'{n} - {self._playbook["tasks"][n]["task"]["name"]}'
+class DictRenderer(PlaybookSequenceRenderer):
+    def _render_str(self, transform):
+        return f'{transform} - {self._playbook["tasks"][transform]["task"]["name"]}'
+
+    def _render_list(self, transform):
+        return [self.render(t) for t in transform]
+
+    def _render_dict(self, transform):
+        return {k: self.render(v) for k, v in transform.items()}
 
 def main():
     with open(sys.argv[1]) as f:
         yaml = YAML()
         playbook = yaml.load(f)
     playbook_transform = PlaybookSequenceTransformer(playbook).transform()
-    playbook_render = PlaybookSequenceRenderer(playbook).render(playbook_transform)
+    playbook_render = DictRenderer(playbook).render(playbook_transform)
     print(json.dumps(playbook_render, indent=4))
 
 if __name__ == '__main__':
