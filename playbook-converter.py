@@ -23,6 +23,7 @@ from ast import (
     Store,
     MatchAs,
     Pass,
+    Raise,
 )
 
 from ruamel.yaml import YAML
@@ -57,14 +58,16 @@ class GraphSequenceTransformer:
                 if n == stop:
                     break
                 parts.append(n)
-            elif len(node.next_nodes) == 1:
-                # just a single condition but multiple branches
-                n = self._get_first_common_node(n)
-                parts.append([
-                    self._transform_graph_sequence(n2, n)
-                    for n2 in next_nodes
-                    if n2 != stop
-                ])
+            # elif len(node.next_nodes) == 1:
+            #     # just a single condition but multiple branches
+            #     n = self._get_first_common_node(n)
+            #     parts.append([
+            #         self._transform_graph_sequence(n2, n)
+            #         for n2 in next_nodes
+            #         if n2 != stop
+            #     ])
+            #     if n is None or n == stop:
+            #         break
             else:
                 # preserve condition object structure
                 # and append to parts recursively
@@ -141,7 +144,11 @@ class PlaybookDictRenderer(SequenceRenderer):
 
 class PlaybookPythonAstRenderer(SequenceRenderer):
     def _render_str(self, transform):
-        task = self._data_sources['playbook']['tasks'][transform]
+        tasks = self._data_sources['playbook']['tasks']
+        if transform in tasks:
+            task = tasks[transform]
+        else:
+            task = {'type': 'error', 'task': None}
         if task['type'] == 'start':
             return Expr(
                 value=Constant(value=f'{task["id"]} - start'))
@@ -165,6 +172,13 @@ class PlaybookPythonAstRenderer(SequenceRenderer):
                         Constant(value=task['task']['name'])],
                     keywords=[]),
                     lineno=None)
+        elif task['type'] == 'error':
+            return Raise(
+                exc=Call(
+                    func=Name(id='Exception', ctx=Load()),
+                    args=[
+                        Constant(value='stop')],
+                    keywords=[]))
         else:
             raise Exception(task)
 
@@ -183,6 +197,8 @@ class PlaybookPythonAstRenderer(SequenceRenderer):
             return [self.render(t) for t in transform]
 
     def _render_dict(self, transform):
+        if '#default#' not in transform:
+            transform['#default#'] = ['-1']
         return Match(
             subject=Name(id='condition_res', ctx=Load()),
             cases=[
