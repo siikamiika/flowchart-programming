@@ -16,7 +16,8 @@ class PlaybookConverter:
 
     @functools.lru_cache(2**16)
     def _transform_graph_sequence(self, n, stop=None):
-        parts = [n]
+        parts = []
+        parts.append(self._render_node(n))
         while True:
             node = self._playbook['tasks'][n]
             if 'nexttasks' not in node:
@@ -29,7 +30,7 @@ class PlaybookConverter:
                 n = next_nodes[0]
                 if n == stop:
                     break
-                parts.append(n)
+                parts.append(self._render_node(n))
             else:
                 # preserve condition object structure
                 # and append to parts recursively
@@ -51,8 +52,11 @@ class PlaybookConverter:
                 parts.append(parts2)
                 if n is None or n == stop:
                     break
-                parts.append(n)
+                parts.append(self._render_node(n))
         return parts
+
+    def _render_node(self, n):
+        return f'{n} - {self._playbook["tasks"][n]["task"]["name"]}'
 
     def _get_first_common_node(self, n):
         depths = self._get_node_depths(n)
