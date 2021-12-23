@@ -4,26 +4,31 @@ import sys
 import itertools
 import json
 import functools
-import abc
 
 from ruamel.yaml import YAML
 
-class PlaybookSequenceTransformer:
-    def __init__(self, playbook):
-        self._playbook = playbook
+class Node:
+    def __init__(self, node_id, next_nodes):
+        self.node_id = node_id
+        self.next_nodes = next_nodes
 
-    def transform(self):
-        return self._transform_graph_sequence(self._playbook['starttaskid'])
+    def get_next_nodes_flat(self):
+        return list(itertools.chain(*self.next_nodes.values()))
+
+class GraphSequenceTransformer:
+    def __init__(self, nodes):
+        self._nodes = nodes
+
+    def transform(self, start_node):
+        return self._transform_graph_sequence(start_node.node_id)
 
     @functools.lru_cache(2**16)
     def _transform_graph_sequence(self, n, stop=None):
         parts = []
         parts.append(n)
         while True:
-            node = self._playbook['tasks'][n]
-            if 'nexttasks' not in node:
-                break
-            next_nodes = list(itertools.chain(*node['nexttasks'].values()))
+            node = self._nodes[n]
+            next_nodes = node.get_next_nodes_flat()
             if len(next_nodes) == 0:
                 break
             elif len(next_nodes) == 1:
@@ -37,7 +42,7 @@ class PlaybookSequenceTransformer:
                 # and append to parts recursively
                 n = self._get_first_common_node(n)
                 parts2 = {}
-                for k, v in node['nexttasks'].items():
+                for k, v in node.next_nodes.items():
                     paths = []
                     for n2 in v:
                         if n2 == stop:
@@ -79,25 +84,26 @@ class PlaybookSequenceTransformer:
 
     @functools.lru_cache(2**16)
     def _get_node_depths(self, n, depth=0):
-        node = self._playbook['tasks'][n]
-        if 'nexttasks' not in node:
+        node = self._nodes[n]
+        if not node.next_nodes:
             return [{n: depth}]
         out = []
-        for n2 in itertools.chain(*node['nexttasks'].values()):
+        for n2 in node.get_next_nodes_flat():
             for depths in self._get_node_depths(n2, depth + 1):
                 out.append({n: depth, **depths})
         return out
 
-class PlaybookSequenceRenderer:
-    def __init__(self, playbook):
-        self._playbook = playbook
+class SequenceRenderer:
+    def __init__(self, data_sources):
+        self._data_sources = data_sources
 
     def render(self, transform):
         return getattr(self, f'_render_{type(transform).__name__}')(transform)
 
-class DictRenderer(PlaybookSequenceRenderer):
+class PlaybookDictRenderer(SequenceRenderer):
     def _render_str(self, transform):
-        return f'{transform} - {self._playbook["tasks"][transform]["task"]["name"]}'
+        task = self._data_sources['playbook']['tasks'][transform]
+        return f'{transform} - {task["task"]["name"]}'
 
     def _render_list(self, transform):
         return [self.render(t) for t in transform]
@@ -109,8 +115,12 @@ def main():
     with open(sys.argv[1]) as f:
         yaml = YAML()
         playbook = yaml.load(f)
-    playbook_transform = PlaybookSequenceTransformer(playbook).transform()
-    playbook_render = DictRenderer(playbook).render(playbook_transform)
+    nodes = {
+        t['id']: Node(t['id'], t['nexttasks'] if 'nexttasks' in t else {})
+        for t in playbook['tasks'].values()
+    }
+    playbook_transform = GraphSequenceTransformer(nodes).transform(nodes[playbook['starttaskid']])
+    playbook_render = PlaybookDictRenderer({'playbook': playbook}).render(playbook_transform)
     print(json.dumps(playbook_render, indent=4))
 
 if __name__ == '__main__':
