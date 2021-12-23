@@ -7,17 +7,17 @@ import functools
 
 from ruamel.yaml import YAML
 
-class PlaybookConverter:
+class PlaybookSequenceTransformer:
     def __init__(self, playbook):
         self._playbook = playbook
 
-    def convert(self):
+    def transform(self):
         return self._transform_graph_sequence(self._playbook['starttaskid'])
 
     @functools.lru_cache(2**16)
     def _transform_graph_sequence(self, n, stop=None):
         parts = []
-        parts.append(self._render_node(n))
+        parts.append(n)
         while True:
             node = self._playbook['tasks'][n]
             if 'nexttasks' not in node:
@@ -30,7 +30,7 @@ class PlaybookConverter:
                 n = next_nodes[0]
                 if n == stop:
                     break
-                parts.append(self._render_node(n))
+                parts.append(n)
             else:
                 # preserve condition object structure
                 # and append to parts recursively
@@ -52,11 +52,8 @@ class PlaybookConverter:
                 parts.append(parts2)
                 if n is None or n == stop:
                     break
-                parts.append(self._render_node(n))
+                parts.append(n)
         return parts
-
-    def _render_node(self, n):
-        return f'{n} - {self._playbook["tasks"][n]["task"]["name"]}'
 
     def _get_first_common_node(self, n):
         depths = self._get_node_depths(n)
@@ -90,12 +87,29 @@ class PlaybookConverter:
                 out.append({n: depth, **depths})
         return out
 
+class PlaybookSequenceRenderer:
+    def __init__(self, playbook):
+        self._playbook = playbook
+
+    def render(self, transform):
+        out = []
+        if isinstance(transform, str):
+            return self._render_node(transform)
+        elif isinstance(transform, list):
+            return [self.render(t) for t in transform]
+        elif isinstance(transform, dict):
+            return {k: self.render(v) for k, v in transform.items()}
+
+    def _render_node(self, n):
+        return f'{n} - {self._playbook["tasks"][n]["task"]["name"]}'
+
 def main():
     with open(sys.argv[1]) as f:
         yaml = YAML()
         playbook = yaml.load(f)
-    playbook_converter = PlaybookConverter(playbook)
-    print(json.dumps(playbook_converter.convert(), indent=4))
+    playbook_transform = PlaybookSequenceTransformer(playbook).transform()
+    playbook_render = PlaybookSequenceRenderer(playbook).render(playbook_transform)
+    print(json.dumps(playbook_render, indent=4))
 
 if __name__ == '__main__':
     main()
