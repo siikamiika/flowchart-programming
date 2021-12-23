@@ -2,3 +2,4 @@
 - convert python ast to flowchart
 - https://en.wikipedia.org/wiki/Directed_acyclic_graph
     - but also: loops
+- https://en.wikipedia.org/wiki/Graph_rewriting
