@@ -4,6 +4,26 @@ import sys
 import itertools
 import json
 import functools
+import ast
+from ast import (
+    Module,
+    Expr,
+    Call,
+    Name,
+    Load,
+    Constant,
+    Match,
+    match_case,
+    MatchValue,
+    If,
+    FunctionDef,
+    arguments,
+    arg,
+    Assign,
+    Store,
+    MatchAs,
+    Pass,
+)
 
 from ruamel.yaml import YAML
 
@@ -37,6 +57,14 @@ class GraphSequenceTransformer:
                 if n == stop:
                     break
                 parts.append(n)
+            elif len(node.next_nodes) == 1:
+                # just a single condition but multiple branches
+                n = self._get_first_common_node(n)
+                parts.append([
+                    self._transform_graph_sequence(n2, n)
+                    for n2 in next_nodes
+                    if n2 != stop
+                ])
             else:
                 # preserve condition object structure
                 # and append to parts recursively
@@ -111,6 +139,62 @@ class PlaybookDictRenderer(SequenceRenderer):
     def _render_dict(self, transform):
         return {k: self.render(v) for k, v in transform.items()}
 
+class PlaybookPythonAstRenderer(SequenceRenderer):
+    def _render_str(self, transform):
+        task = self._data_sources['playbook']['tasks'][transform]
+        if task['type'] == 'start':
+            return Expr(
+                value=Constant(value=f'{task["id"]} - start'))
+        elif task['type'] == 'title':
+            return Expr(
+                value=Constant(value=f'{task["id"]} - {task["task"]["name"]}'))
+        elif task['type'] in ['regular', 'playbook']:
+            return Expr(
+                value=Call(
+                    func=Name(id=f'task_{task["id"]}', ctx=Load()),
+                    args=[
+                        Constant(value=task['task']['name'])],
+                    keywords=[]))
+        elif task['type'] == 'condition':
+            return Assign(
+                targets=[
+                    Name(id='condition_res', ctx=Store())],
+                value=Call(
+                    func=Name(id=f'condition_{task["id"]}', ctx=Load()),
+                    args=[
+                        Constant(value=task['task']['name'])],
+                    keywords=[]),
+                    lineno=None)
+        else:
+            raise Exception(task)
+
+    def _render_list(self, transform):
+        if len(transform) == 0:
+            return Pass()
+        elif all(isinstance(t, list) for t in transform):
+            return [
+                If(
+                    test=Constant(value=True),
+                    body=self.render(t),
+                    orelse=[])
+                for t in transform
+            ]
+        else:
+            return [self.render(t) for t in transform]
+
+    def _render_dict(self, transform):
+        return Match(
+            subject=Name(id='condition_res', ctx=Load()),
+            cases=[
+                match_case(
+                    pattern=MatchValue(
+                        value=Constant(value=k)),
+                    body=[self.render(v2) for v2 in v] if v else Pass(),
+                )
+                for k, v in transform.items()
+            ]
+        )
+
 def main():
     with open(sys.argv[1]) as f:
         yaml = YAML()
@@ -120,8 +204,16 @@ def main():
         for t in playbook['tasks'].values()
     }
     playbook_transform = GraphSequenceTransformer(nodes).transform(nodes[playbook['starttaskid']])
+    # render dict
     playbook_render = PlaybookDictRenderer({'playbook': playbook}).render(playbook_transform)
     print(json.dumps(playbook_render, indent=4))
+    # render python
+    playbook_ast = PlaybookPythonAstRenderer({'playbook': playbook}).render(playbook_transform)
+    print(ast.dump(Module(body=playbook_ast, type_ignores=[]), indent=4))
+    print(ast.unparse(Module(
+        body=playbook_ast,
+        type_ignores=[]
+    )))
 
 if __name__ == '__main__':
     main()
