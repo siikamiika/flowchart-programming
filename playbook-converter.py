@@ -12,7 +12,6 @@ class PlaybookConverter:
         self._playbook = playbook
 
     def convert(self):
-        # TODO convert to python
         return self._transform_graph_sequence(self._playbook['starttaskid'])
 
     @functools.lru_cache(2**16)
