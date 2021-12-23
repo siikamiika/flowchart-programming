@@ -1,3 +1,4 @@
 - generate python ast
 - convert python ast to flowchart
 - https://en.wikipedia.org/wiki/Directed_acyclic_graph
+    - but also: loops
